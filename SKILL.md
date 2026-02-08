@@ -1,28 +1,59 @@
 ---
 name: changelog-gen
-description: Generate formatted CHANGELOG entries from git history between two tags using Keep a Changelog format.
+description: Generate formatted changelogs from git history between tags, with conventional commit categorization.
 version: 0.1.0
 license: Apache-2.0
 ---
 
-# Changelog Generator
+Generate formatted changelogs from git commit history, automatically categorizing by conventional commit types.
 
-## Purpose
-
-Reads git commit history between two tags (or refs) and produces a formatted CHANGELOG entry following the Keep a Changelog format. Supports conventional commits for automatic categorization into Added, Changed, Fixed, Deprecated, Removed, and Security sections.
-
-## Quick Start
+## Try It Now
 
 ```bash
-python3 scripts/run.py v1.0.0 v1.1.0
+./scripts/run.sh --demo
 ```
 
-## Reference Index
+## Contract
 
-- [references/api.md](references/api.md) — CLI flags, exit codes, output formats
-- [references/usage-guide.md](references/usage-guide.md) — Walkthrough from basic to advanced usage
-- [references/examples.md](references/examples.md) — Concrete examples with expected output
+- Reads git log between two refs (tags, commits, or HEAD)
+- Categorizes commits by conventional commit prefixes: feat, fix, docs, refactor, test, chore
+- Outputs formatted changelog to stdout in markdown, text, or JSON
+- Auto-detects latest tag if FROM_TAG not provided
+- Side effects: none (read-only git operations)
+- Exit 0: success, prints `OK: generated <format> changelog (N commits)` to stderr
+- Exit 1: runtime error (not a git repo, no commits)
+- Exit 2: invalid usage
 
-## Implementation
+## Real Usage
 
-See `scripts/run.py` — a single Python script using only `subprocess` and stdlib.
+```bash
+# Generate markdown changelog from latest tag to HEAD
+./scripts/run.sh
+
+# Between specific tags
+./scripts/run.sh v1.0.0 v1.1.0
+
+# JSON output for CI integration
+./scripts/run.sh --format json v1.0.0 HEAD
+
+# From a different repo
+./scripts/run.sh --repo /path/to/project
+```
+
+## Options Table
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| FROM_TAG | No | latest tag | Start ref |
+| TO_TAG | No | HEAD | End ref |
+| --format | No | markdown | Output: markdown, json, text |
+| --repo | No | . | Git repository path |
+| --demo | No | - | Show demo output |
+| --validate | No | - | Run self-check |
+| --help | No | - | Show usage |
+
+## Validation
+
+```bash
+./scripts/run.sh --validate
+```

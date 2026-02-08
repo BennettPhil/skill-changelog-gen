@@ -1,17 +1,9 @@
 # changelog-gen
 
-Generate formatted CHANGELOG entries from git history between two tags.
-
-## Prerequisites
-
-- Python 3.10+
-- Git
-
-## Quick Start
+Generate formatted changelogs from git history with conventional commit categorization.
 
 ```bash
-python3 scripts/run.py v1.0.0 v1.1.0
+./scripts/run.sh --demo
 ```
 
-See [references/usage-guide.md](references/usage-guide.md) for detailed usage.
-See [references/api.md](references/api.md) for complete documentation.
+See [SKILL.md](SKILL.md) for full contract.
