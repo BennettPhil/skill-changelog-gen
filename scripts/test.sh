@@ -2,55 +2,86 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
 PASS=0
 FAIL=0
 
-pass() { ((PASS++)); echo "  PASS: $1"; }
-fail() { ((FAIL++)); echo "  FAIL: $1 -- $2"; }
-
-check_contains() {
-  local desc="$1" needle="$2" haystack="$3"
-  if echo "$haystack" | grep -qF -- "$needle"; then
-    pass "$desc"
-  else
-    fail "$desc" "output does not contain '$needle'"
-  fi
+check() {
+    local desc="$1" expected="$2" actual="$3"
+    if [[ "$expected" == "$actual" ]]; then
+        echo "  PASS: $desc"
+        PASS=$((PASS + 1))
+    else
+        echo "  FAIL: $desc"
+        echo "    expected: $expected"
+        echo "    actual:   $actual"
+        FAIL=$((FAIL + 1))
+    fi
 }
 
-echo "Running tests for: changelog-gen"
-echo "================================"
+check_contains() {
+    local desc="$1" needle="$2" haystack="$3"
+    if echo "$haystack" | grep -qF -- "$needle"; then
+        echo "  PASS: $desc"
+        PASS=$((PASS + 1))
+    else
+        echo "  FAIL: $desc (output does not contain '$needle')"
+        FAIL=$((FAIL + 1))
+    fi
+}
 
-# Demo test
-echo ""
-echo "Demo:"
-result=$("$SCRIPT_DIR/run.sh" --demo 2>/dev/null)
-check_contains "demo has changelog header" "# Changelog" "$result"
-check_contains "demo has features section" "### Features" "$result"
-check_contains "demo has bug fixes section" "### Bug Fixes" "$result"
+echo "=== changelog-gen tests ==="
 
-ok_msg=$("$SCRIPT_DIR/run.sh" --demo 2>&1 >/dev/null)
-check_contains "demo produces OK message" "OK:" "$ok_msg"
+# Setup a test git repo
+REPO="$TMPDIR/test-repo"
+mkdir -p "$REPO"
+git -C "$REPO" init -q
+git -C "$REPO" config user.email "test@test.com"
+git -C "$REPO" config user.name "Tester"
 
-# Validate test
-echo ""
-echo "Validate:"
-result=$("$SCRIPT_DIR/run.sh" --validate 2>&1)
-check_contains "validate passes" "PASS: all checks passed" "$result"
+# Create initial commit and tag
+echo "init" > "$REPO/file.txt"
+git -C "$REPO" add . && git -C "$REPO" commit -q -m "initial commit"
+git -C "$REPO" tag v1.0.0
 
-# Error cases
-echo ""
-echo "Error cases:"
+# Add conventional commits
+echo "a" >> "$REPO/file.txt" && git -C "$REPO" add . && git -C "$REPO" commit -q -m "feat: add user login"
+echo "b" >> "$REPO/file.txt" && git -C "$REPO" add . && git -C "$REPO" commit -q -m "fix: resolve null pointer in auth"
+echo "c" >> "$REPO/file.txt" && git -C "$REPO" add . && git -C "$REPO" commit -q -m "docs: update README"
+echo "d" >> "$REPO/file.txt" && git -C "$REPO" add . && git -C "$REPO" commit -q -m "some random commit"
+git -C "$REPO" tag v1.1.0
+
+# Test 1: markdown output contains Features section
+output=$(bash "$SCRIPT_DIR/run.sh" --repo "$REPO" v1.0.0 v1.1.0)
+check_contains "md: has Features header" "## Features" "$output"
+check_contains "md: has Bug Fixes header" "## Bug Fixes" "$output"
+check_contains "md: has user login commit" "add user login" "$output"
+check_contains "md: has fix commit" "resolve null pointer" "$output"
+check_contains "md: has changelog header" "Changelog: v1.0.0...v1.1.0" "$output"
+
+# Test 2: JSON output
+json_output=$(bash "$SCRIPT_DIR/run.sh" --repo "$REPO" --format json v1.0.0 v1.1.0)
+total=$(echo "$json_output" | python3 -c "import json,sys; print(json.load(sys.stdin)['total'])")
+check "json: total commits" "4" "$total"
+has_features=$(echo "$json_output" | python3 -c "import json,sys; print('Features' in json.load(sys.stdin)['groups'])")
+check "json: has Features group" "True" "$has_features"
+
+# Test 3: --help exits 0
+bash "$SCRIPT_DIR/run.sh" --help >/dev/null 2>&1 && code=0 || code=$?
+check "--help exits 0" "0" "$code"
+
+# Test 4: missing ref exits non-zero
 set +e
-"$SCRIPT_DIR/run.sh" 2>/dev/null; rc=$?
+bash "$SCRIPT_DIR/run.sh" 2>/dev/null
+missing_code=$?
 set -e
-# Running without a git repo in the cwd should fail (unless we're in one)
-# Just test --help works
-set +e
-"$SCRIPT_DIR/run.sh" --help >/dev/null 2>&1; rc=$?
-set -e
-[[ $rc -eq 0 ]] && pass "help exits 0" || fail "help" "expected exit 0, got $rc"
+check "missing ref exits non-zero" "1" "$((missing_code > 0 ? 1 : 0))"
+
+# Test 5: from tag to HEAD (no TO_REF)
+output_head=$(bash "$SCRIPT_DIR/run.sh" --repo "$REPO" v1.0.0)
+check_contains "head: has commits" "add user login" "$output_head"
 
 echo ""
-echo "================================"
-echo "Results: $PASS passed, $FAIL failed"
-[[ $FAIL -eq 0 ]] || exit 1
+echo "$PASS passed, $FAIL failed"
+[[ $FAIL -eq 0 ]]

@@ -1,43 +1,42 @@
 ---
 name: changelog-gen
-description: Generates a formatted CHANGELOG from git history between two tags or refs
+description: Generates a formatted CHANGELOG from git history between two tags or refs, grouping commits by type.
 version: 0.1.0
 license: Apache-2.0
 ---
 
-# changelog-gen
+# Changelog Generator
 
-Reads git commit history between two refs (tags, branches, SHAs) and produces a formatted CHANGELOG grouped by conventional commit type.
+Reads git commit history between two refs (tags, branches, or SHAs) and produces a formatted CHANGELOG grouped by conventional commit types (feat, fix, docs, chore, etc.).
 
-## Purpose
+## Usage
 
-Generating changelogs manually is tedious and error-prone. This tool reads your git history and organizes commits into a clean, readable changelog format. It understands conventional commits (feat, fix, refactor, etc.) and groups them automatically.
+```bash
+# Generate changelog between two tags
+./scripts/run.sh v1.0.0 v1.1.0
 
-## Instructions
+# Generate changelog from a tag to HEAD
+./scripts/run.sh v1.0.0
 
-When a user needs to generate a changelog:
+# Output as markdown (default) or JSON
+./scripts/run.sh --format json v1.0.0 v1.1.0
+```
 
-1. Run `./scripts/run.sh` in a git repository
-2. By default, it generates a changelog from the last tag to HEAD
-3. Use `--from <ref>` and `--to <ref>` to specify a custom range
-4. Use `--format md` (default) or `--format json` for output format
-5. Output goes to stdout; redirect to a file as needed
+## Options
 
-## Inputs
+- `--format md|json` — Output format (default: `md`)
+- `--repo PATH` — Path to git repository (default: current directory)
+- `--help` — Show usage information
 
-- `--from <ref>`: Starting git ref (tag, branch, SHA). Default: latest tag
-- `--to <ref>`: Ending git ref. Default: HEAD
-- `--format <md|json>`: Output format. Default: md
-- `--title <text>`: Version title for the changelog section
-- `--help`: Show usage
+## Commit Grouping
 
-## Outputs
+Commits are grouped by conventional commit prefix:
+- **Features** (`feat:`) — New features
+- **Bug Fixes** (`fix:`) — Bug fixes
+- **Documentation** (`docs:`) — Documentation changes
+- **Refactoring** (`refactor:`) — Code refactoring
+- **Other** — Commits without a recognized prefix
 
-Markdown changelog grouped by type, or JSON array of commits with parsed metadata.
+## Output
 
-## Constraints
-
-- Must be run inside a git repository
-- Requires git to be installed
-- Works best with conventional commit messages (feat:, fix:, etc.)
-- Non-conventional commits are grouped under "Other"
+Markdown output includes a header with the version range and date, followed by grouped commits with short SHAs and author names.
