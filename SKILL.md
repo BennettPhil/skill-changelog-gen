@@ -1,59 +1,43 @@
 ---
 name: changelog-gen
-description: Generate formatted changelogs from git history between tags, with conventional commit categorization.
+description: Generates a formatted CHANGELOG from git history between two tags or refs
 version: 0.1.0
 license: Apache-2.0
 ---
 
-Generate formatted changelogs from git commit history, automatically categorizing by conventional commit types.
+# changelog-gen
 
-## Try It Now
+Reads git commit history between two refs (tags, branches, SHAs) and produces a formatted CHANGELOG grouped by conventional commit type.
 
-```bash
-./scripts/run.sh --demo
-```
+## Purpose
 
-## Contract
+Generating changelogs manually is tedious and error-prone. This tool reads your git history and organizes commits into a clean, readable changelog format. It understands conventional commits (feat, fix, refactor, etc.) and groups them automatically.
 
-- Reads git log between two refs (tags, commits, or HEAD)
-- Categorizes commits by conventional commit prefixes: feat, fix, docs, refactor, test, chore
-- Outputs formatted changelog to stdout in markdown, text, or JSON
-- Auto-detects latest tag if FROM_TAG not provided
-- Side effects: none (read-only git operations)
-- Exit 0: success, prints `OK: generated <format> changelog (N commits)` to stderr
-- Exit 1: runtime error (not a git repo, no commits)
-- Exit 2: invalid usage
+## Instructions
 
-## Real Usage
+When a user needs to generate a changelog:
 
-```bash
-# Generate markdown changelog from latest tag to HEAD
-./scripts/run.sh
+1. Run `./scripts/run.sh` in a git repository
+2. By default, it generates a changelog from the last tag to HEAD
+3. Use `--from <ref>` and `--to <ref>` to specify a custom range
+4. Use `--format md` (default) or `--format json` for output format
+5. Output goes to stdout; redirect to a file as needed
 
-# Between specific tags
-./scripts/run.sh v1.0.0 v1.1.0
+## Inputs
 
-# JSON output for CI integration
-./scripts/run.sh --format json v1.0.0 HEAD
+- `--from <ref>`: Starting git ref (tag, branch, SHA). Default: latest tag
+- `--to <ref>`: Ending git ref. Default: HEAD
+- `--format <md|json>`: Output format. Default: md
+- `--title <text>`: Version title for the changelog section
+- `--help`: Show usage
 
-# From a different repo
-./scripts/run.sh --repo /path/to/project
-```
+## Outputs
 
-## Options Table
+Markdown changelog grouped by type, or JSON array of commits with parsed metadata.
 
-| Flag | Required | Default | Description |
-|------|----------|---------|-------------|
-| FROM_TAG | No | latest tag | Start ref |
-| TO_TAG | No | HEAD | End ref |
-| --format | No | markdown | Output: markdown, json, text |
-| --repo | No | . | Git repository path |
-| --demo | No | - | Show demo output |
-| --validate | No | - | Run self-check |
-| --help | No | - | Show usage |
+## Constraints
 
-## Validation
-
-```bash
-./scripts/run.sh --validate
-```
+- Must be run inside a git repository
+- Requires git to be installed
+- Works best with conventional commit messages (feat:, fix:, etc.)
+- Non-conventional commits are grouped under "Other"

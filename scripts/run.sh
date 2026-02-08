@@ -1,240 +1,185 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# run.sh — Generate changelogs from git history
-# Usage: ./run.sh [OPTIONS] [FROM_TAG] [TO_TAG]
+# changelog-gen: generate changelog from git history
 
-FORMAT="markdown"
-FROM_TAG=""
-TO_TAG="HEAD"
-REPO_DIR="."
+FROM_REF=""
+TO_REF="HEAD"
+FORMAT="md"
+TITLE=""
+
+usage() {
+  cat <<'EOF'
+Usage: changelog-gen [OPTIONS]
+
+Generate a formatted CHANGELOG from git history.
+
+Options:
+  --from <ref>      Starting ref (default: latest tag)
+  --to <ref>        Ending ref (default: HEAD)
+  --format <md|json> Output format (default: md)
+  --title <text>    Version title for the section
+  --help            Show this help message
+
+Must be run inside a git repository.
+EOF
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --from)   FROM_REF="$2"; shift 2 ;;
+    --to)     TO_REF="$2"; shift 2 ;;
     --format) FORMAT="$2"; shift 2 ;;
-    --repo) REPO_DIR="$2"; shift 2 ;;
-    --demo)
-      # Built-in demo with sample data
-      echo "# Changelog"
-      echo ""
-      echo "## v1.2.0 (2026-02-08)"
-      echo ""
-      echo "### Features"
-      echo "- Add user authentication with OAuth2 support"
-      echo "- Implement dark mode toggle in settings"
-      echo "- Add CSV export for reports"
-      echo ""
-      echo "### Bug Fixes"
-      echo "- Fix memory leak in WebSocket handler"
-      echo "- Resolve race condition in cache invalidation"
-      echo "- Fix timezone display for international users"
-      echo ""
-      echo "### Other"
-      echo "- Update dependencies to latest versions"
-      echo "- Improve CI pipeline performance by 40%"
-      echo ""
-      echo "---"
-      echo "*8 commits from v1.1.0 to v1.2.0*"
-      echo "OK: generated demo changelog" >&2
-      exit 0
-      ;;
-    --validate)
-      echo "Validating changelog-gen..."
-      # Check --demo works
-      out=$("$0" --demo 2>/dev/null)
-      if echo "$out" | grep -q "# Changelog"; then
-        echo "PASS: demo generates changelog"
-      else
-        echo "FAIL: demo output missing"; exit 1
-      fi
-      if echo "$out" | grep -q "### Features"; then
-        echo "PASS: demo has categorized sections"
-      else
-        echo "FAIL: demo missing categories"; exit 1
-      fi
-      echo "PASS: all checks passed"
-      exit 0
-      ;;
-    --help)
-      echo "Usage: run.sh [OPTIONS] [FROM_TAG] [TO_TAG]"
-      echo ""
-      echo "Generate changelogs from git commit history."
-      echo ""
-      echo "Arguments:"
-      echo "  FROM_TAG    Start tag (default: latest tag)"
-      echo "  TO_TAG      End ref (default: HEAD)"
-      echo ""
-      echo "Options:"
-      echo "  --format markdown|json|text  Output format (default: markdown)"
-      echo "  --repo DIR                   Git repo directory (default: .)"
-      echo "  --demo                       Show demo output"
-      echo "  --validate                   Run self-check"
-      echo "  --help                       Show this help"
-      exit 0
-      ;;
-    -*) echo "ERROR: unknown option: $1" >&2; exit 2 ;;
-    *)
-      if [[ -z "$FROM_TAG" ]]; then
-        FROM_TAG="$1"; shift
-      elif [[ "$TO_TAG" == "HEAD" ]]; then
-        TO_TAG="$1"; shift
-      else
-        echo "ERROR: unexpected argument: $1" >&2; exit 2
-      fi
-      ;;
+    --title)  TITLE="$2"; shift 2 ;;
+    --help)   usage; exit 0 ;;
+    -*)       echo "Error: unknown option '$1'" >&2; exit 1 ;;
+    *)        echo "Error: unexpected argument '$1'" >&2; exit 1 ;;
   esac
 done
 
-# Verify git repo
-if [[ ! -d "$REPO_DIR/.git" ]]; then
-  echo "ERROR: not a git repository: $REPO_DIR" >&2
-  exit 2
+# Verify we're in a git repo
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+  echo "Error: not a git repository" >&2
+  exit 1
 fi
 
-cd "$REPO_DIR"
-
-# Auto-detect FROM_TAG if not provided
-if [[ -z "$FROM_TAG" ]]; then
-  FROM_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-  if [[ -z "$FROM_TAG" ]]; then
+# Default from: latest tag
+if [ -z "$FROM_REF" ]; then
+  FROM_REF=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+  if [ -z "$FROM_REF" ]; then
     # No tags, use first commit
-    FROM_TAG=$(git rev-list --max-parents=0 HEAD 2>/dev/null | head -1)
-    if [[ -z "$FROM_TAG" ]]; then
-      echo "ERROR: no commits found" >&2
-      exit 1
-    fi
+    FROM_REF=$(git rev-list --max-parents=0 HEAD 2>/dev/null | head -1)
   fi
 fi
 
-# Get commits
-commits=$(git log --pretty=format:"%s|%an|%ad" --date=short "${FROM_TAG}..${TO_TAG}" 2>/dev/null || true)
+# Default title
+if [ -z "$TITLE" ]; then
+  TITLE="Changelog ($FROM_REF...$TO_REF)"
+fi
 
-if [[ -z "$commits" ]]; then
-  echo "No changes found between $FROM_TAG and $TO_TAG."
-  echo "OK: no changes" >&2
+# Get commit log
+COMMITS=$(git log --format="%H|%s|%an|%aI" "$FROM_REF".."$TO_REF" 2>/dev/null || true)
+
+if [ -z "$COMMITS" ]; then
+  if [ "$FORMAT" = "json" ]; then
+    echo "[]"
+  else
+    echo "No commits found between $FROM_REF and $TO_REF"
+  fi
   exit 0
 fi
 
-# Categorize commits by conventional commit prefixes
-declare -a features fixes docs refactors tests chores other
+# Parse commits into categories
+declare -A CATEGORIES
+CATEGORIES=(
+  [feat]="Features"
+  [fix]="Bug Fixes"
+  [docs]="Documentation"
+  [style]="Styles"
+  [refactor]="Refactoring"
+  [perf]="Performance"
+  [test]="Tests"
+  [build]="Build"
+  [ci]="CI"
+  [chore]="Chores"
+  [revert]="Reverts"
+)
 
-while IFS='|' read -r subject author date; do
-  [[ -z "$subject" ]] && continue
-  sub_lower=$(echo "$subject" | tr '[:upper:]' '[:lower:]')
+# Collect commits by category
+declare -A CAT_COMMITS
 
-  if [[ "$sub_lower" == feat:* || "$sub_lower" == feature:* || "$sub_lower" == feat\(*  ]]; then
-    features+=("$subject")
-  elif [[ "$sub_lower" == fix:* || "$sub_lower" == bugfix:* || "$sub_lower" == fix\(* ]]; then
-    fixes+=("$subject")
-  elif [[ "$sub_lower" == docs:* || "$sub_lower" == doc:* ]]; then
-    docs+=("$subject")
-  elif [[ "$sub_lower" == refactor:* || "$sub_lower" == refact:* ]]; then
-    refactors+=("$subject")
-  elif [[ "$sub_lower" == test:* || "$sub_lower" == tests:* ]]; then
-    tests+=("$subject")
-  elif [[ "$sub_lower" == chore:* || "$sub_lower" == ci:* || "$sub_lower" == build:* ]]; then
-    chores+=("$subject")
-  else
-    other+=("$subject")
+while IFS= read -r line; do
+  [ -z "$line" ] && continue
+  sha=$(echo "$line" | cut -d'|' -f1)
+  msg=$(echo "$line" | cut -d'|' -f2)
+  author=$(echo "$line" | cut -d'|' -f3)
+  date=$(echo "$line" | cut -d'|' -f4)
+
+  # Parse conventional commit: type(scope): description
+  category="other"
+  scope=""
+  description="$msg"
+
+  if echo "$msg" | grep -qE '^[a-z]+(\([^)]+\))?(!)?:'; then
+    category=$(echo "$msg" | sed 's/^\([a-z]*\).*/\1/')
+    if echo "$msg" | grep -qE '^\w+\([^)]+\)'; then
+      scope=$(echo "$msg" | sed 's/^[a-z]*(\([^)]*\)).*/\1/')
+    fi
+    description=$(echo "$msg" | sed 's/^[a-z]*\(([^)]*)\)\{0,1\}!*:[[:space:]]*//')
   fi
-done <<< "$commits"
 
-total_commits=$(echo "$commits" | wc -l | tr -d ' ')
-current_date=$(date +%Y-%m-%d)
+  short_sha="${sha:0:7}"
 
-# --- JSON output ---
-if [[ "$FORMAT" == "json" ]]; then
-  echo "{"
-  echo "  \"from\": \"$FROM_TAG\","
-  echo "  \"to\": \"$TO_TAG\","
-  echo "  \"date\": \"$current_date\","
-  echo "  \"total_commits\": $total_commits,"
-  echo "  \"categories\": {"
+  if [ -n "${CAT_COMMITS[$category]+x}" ]; then
+    CAT_COMMITS[$category]="${CAT_COMMITS[$category]}"$'\n'"${short_sha}|${scope}|${description}|${author}"
+  else
+    CAT_COMMITS[$category]="${short_sha}|${scope}|${description}|${author}"
+  fi
+done <<< "$COMMITS"
 
-  print_json_arr() {
-    local name="$1"; shift
-    local arr=("$@")
-    echo "    \"$name\": ["
-    for ((i = 0; i < ${#arr[@]}; i++)); do
-      comma=","; [[ $i -eq $((${#arr[@]} - 1)) ]] && comma=""
-      escaped=$(echo "${arr[$i]}" | sed 's/"/\\"/g')
-      echo "      \"$escaped\"$comma"
-    done
-    echo "    ]"
-  }
-
+if [ "$FORMAT" = "json" ]; then
+  echo "["
   first=true
-  for cat_name in features fixes docs refactors tests chores other; do
-    eval "arr=(\"\${${cat_name}[@]:-}\")"
-    if [[ ${#arr[@]} -gt 0 && -n "${arr[0]}" ]]; then
-      [[ "$first" != true ]] && echo ","
-      print_json_arr "$cat_name" "${arr[@]}"
-      first=false
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    sha=$(echo "$line" | cut -d'|' -f1)
+    msg=$(echo "$line" | cut -d'|' -f2)
+    author=$(echo "$line" | cut -d'|' -f3)
+    date=$(echo "$line" | cut -d'|' -f4)
+
+    category="other"
+    scope=""
+    description="$msg"
+
+    if echo "$msg" | grep -qE '^[a-z]+(\([^)]+\))?(!)?:'; then
+      category=$(echo "$msg" | sed 's/^\([a-z]*\).*/\1/')
+      if echo "$msg" | grep -qE '^\w+\([^)]+\)'; then
+        scope=$(echo "$msg" | sed 's/^[a-z]*(\([^)]*\)).*/\1/')
+      fi
+      description=$(echo "$msg" | sed 's/^[a-z]*\(([^)]*)\)\{0,1\}!*:[[:space:]]*//')
+    fi
+
+    if $first; then first=false; else echo ","; fi
+    description_escaped=$(echo "$description" | sed 's/"/\\"/g')
+    printf '  {"sha": "%s", "type": "%s", "scope": "%s", "description": "%s", "author": "%s", "date": "%s"}' \
+      "${sha:0:7}" "$category" "$scope" "$description_escaped" "$author" "$date"
+  done <<< "$COMMITS"
+  echo ""
+  echo "]"
+else
+  # Markdown output
+  echo "# $TITLE"
+  echo ""
+  DATE=$(date +%Y-%m-%d)
+  echo "_Generated on ${DATE}_"
+  echo ""
+
+  # Output known categories first
+  for cat_key in feat fix docs style refactor perf test build ci chore revert; do
+    if [ -n "${CAT_COMMITS[$cat_key]+x}" ]; then
+      cat_name="${CATEGORIES[$cat_key]}"
+      echo "## $cat_name"
+      echo ""
+      while IFS='|' read -r short_sha scope desc author; do
+        [ -z "$short_sha" ] && continue
+        if [ -n "$scope" ]; then
+          echo "- **${scope}**: ${desc} (${short_sha})"
+        else
+          echo "- ${desc} (${short_sha})"
+        fi
+      done <<< "${CAT_COMMITS[$cat_key]}"
+      echo ""
     fi
   done
 
-  echo "  }"
-  echo "}"
-  echo "OK: generated JSON changelog ($total_commits commits)" >&2
-  exit 0
-fi
-
-# --- Text output ---
-if [[ "$FORMAT" == "text" ]]; then
-  echo "Changelog: $FROM_TAG -> $TO_TAG ($current_date)"
-  echo ""
-  print_text_section() {
-    local title="$1"; shift
-    local arr=("$@")
-    if [[ ${#arr[@]} -gt 0 && -n "${arr[0]}" ]]; then
-      echo "$title:"
-      for item in "${arr[@]}"; do
-        echo "  - $item"
-      done
-      echo ""
-    fi
-  }
-  print_text_section "Features" "${features[@]:-}"
-  print_text_section "Bug Fixes" "${fixes[@]:-}"
-  print_text_section "Documentation" "${docs[@]:-}"
-  print_text_section "Refactoring" "${refactors[@]:-}"
-  print_text_section "Tests" "${tests[@]:-}"
-  print_text_section "Maintenance" "${chores[@]:-}"
-  print_text_section "Other" "${other[@]:-}"
-  echo "$total_commits commits"
-  echo "OK: generated text changelog ($total_commits commits)" >&2
-  exit 0
-fi
-
-# --- Markdown output (default) ---
-echo "# Changelog"
-echo ""
-echo "## $TO_TAG ($current_date)"
-echo ""
-
-print_md_section() {
-  local title="$1"; shift
-  local arr=("$@")
-  if [[ ${#arr[@]} -gt 0 && -n "${arr[0]}" ]]; then
-    echo "### $title"
-    for item in "${arr[@]}"; do
-      # Strip conventional commit prefix
-      clean=$(echo "$item" | sed 's/^[a-z]*(\?[^)]*)\?:[[:space:]]*//')
-      echo "- $clean"
-    done
+  # Other (non-conventional commits)
+  if [ -n "${CAT_COMMITS[other]+x}" ]; then
+    echo "## Other"
+    echo ""
+    while IFS='|' read -r short_sha scope desc author; do
+      [ -z "$short_sha" ] && continue
+      echo "- ${desc} (${short_sha})"
+    done <<< "${CAT_COMMITS[other]}"
     echo ""
   fi
-}
-
-print_md_section "Features" "${features[@]:-}"
-print_md_section "Bug Fixes" "${fixes[@]:-}"
-print_md_section "Documentation" "${docs[@]:-}"
-print_md_section "Refactoring" "${refactors[@]:-}"
-print_md_section "Tests" "${tests[@]:-}"
-print_md_section "Maintenance" "${chores[@]:-}"
-print_md_section "Other" "${other[@]:-}"
-
-echo "---"
-echo "*${total_commits} commits from ${FROM_TAG} to ${TO_TAG}*"
-
-echo "OK: generated markdown changelog ($total_commits commits)" >&2
+fi
